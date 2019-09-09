@@ -1,0 +1,103 @@
+import PyPDF2
+from PIL import Image
+import io,struct,os,shutil
+
+class PDFUtils:
+    def export(self,inputDir="input",outputDir="output"):  
+        if(os.path.exists(outputDir)):
+            shutil.rmtree(outputDir)
+
+        if(os.path.exists(inputDir)):
+            for root,dirs,files in os.walk(inputDir,topdown=True):
+                output = root.replace(inputDir,outputDir,1)                
+                for file in files:
+                    filePath = os.path.join(root,file)
+                    file_ext = file[file.rfind(".")+1:]                    
+                    if(file_ext.lower()=='pdf'):
+                        outputPath = os.path.join(output,file[:file.rfind(".")])
+                        os.makedirs(outputPath)
+                        self._exportImage(filePath,outputPath)
+                        print("done:",os.path.join(inputDir,file))
+
+    def _exportImage(self,file,outputPath):            
+        with open(file,'rb') as pdf_file:
+            pdf = PyPDF2.PdfFileReader(pdf_file)              
+            for page in range(pdf.numPages):                
+                currentPage = pdf.getPage(page)                
+                xObject = currentPage['/Resources']['/XObject'].getObject()
+                for obj in xObject:            
+                    img_name = os.path.join(outputPath,obj[1:])                    
+                    if xObject[obj]['/Subtype'] == '/Image':                        
+                        if xObject[obj]['/Filter'] == '/CCITTFaxDecode':
+                            if xObject[obj]['/DecodeParms']['/K'] == -1:
+                                CCITT_group = 4
+                            else:
+                                CCITT_group = 3
+                            width = xObject[obj]['/Width']
+                            height = xObject[obj]['/Height']
+
+                            data = xObject[obj]._data  # sorry, getData() does not work for CCITTFaxDecode
+                            img_size = len(data)
+                            tiff_header = self.tiff_header_for_CCITT(width, height, img_size, CCITT_group)
+                            img_name = img_name + '.tiff'                                                        
+                            
+                            with open(img_name, 'wb') as img_file:
+                                img_file.write(tiff_header + data)
+
+                        elif xObject[obj]['/Filter'] == '/DCTDecode':
+                            size = (xObject[obj]['/Width'], xObject[obj]['/Height'])
+                            img_name = img_name +".jpg"
+                            
+                            img = open(img_name, "wb")
+                            img.write(xObject[obj]._data)
+                            img.close()
+
+                        else:
+                            
+                            size = (xObject[obj]['/Width'], xObject[obj]['/Height'])
+                            data = xObject[obj].getData()
+
+                            if xObject[obj]['/ColorSpace'] == '/DeviceRGB':
+                                mode = "RGB"
+                            else:
+                                mode = "P"
+                            if xObject[obj]['/Filter'] == '/FlateDecode':
+                                img = Image.frombytes(mode, size, data)
+                                img.save(obj[1:] + ".png")
+                            
+                            elif xObject[obj]['/Filter'] == '/JPXDecode':
+                                img = open(obj[1:] + ".jp2", "wb")
+                                img.write(data)
+                                img.close() 
+
+
+
+
+    def tiff_header_for_CCITT(self,width, height, img_size, CCITT_group=4):
+        tiff_header_struct = '<' + '2s' + 'h' + 'l' + 'h' + 'hhll' * 8 + 'h'
+        return struct.pack(tiff_header_struct,
+                           b'II',  # Byte order indication: Little indian
+                           42,  # Version number (always 42)
+                           8,  # Offset to first IFD
+                           8,  # Number of tags in IFD
+                           256, 4, 1, width,  # ImageWidth, LONG, 1, width
+                           257, 4, 1, height,  # ImageLength, LONG, 1, lenght
+                           258, 3, 1, 1,  # BitsPerSample, SHORT, 1, 1
+                           259, 3, 1, CCITT_group,  # Compression, SHORT, 1, 4 = CCITT Group 4 fax encoding
+                           262, 3, 1, 0,  # Threshholding, SHORT, 1, 0 = WhiteIsZero
+                           273, 4, 1, struct.calcsize(tiff_header_struct),  # StripOffsets, LONG, 1, len of header
+                           278, 4, 1, height,  # RowsPerStrip, LONG, 1, lenght
+                           279, 4, 1, img_size,  # StripByteCounts, LONG, 1, size of image
+                           0  # last IFD
+                           )
+
+
+if __name__ == '__main__':
+    p = PDFUtils();
+    p.export();
+
+
+
+                   
+                                        
+                
